@@ -9,6 +9,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
+	"path"
+	"syscall"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -44,40 +48,29 @@ func GetRoundRobinProxyIndex() int {
 }
 
 func RoundRobinHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Proxying request")
+	fmt.Println("Forwarding request to port: " + forwardPorts[proxyIndex])
 
 	proxyIndex := GetRoundRobinProxyIndex()
 
-	switch method := r.Method; method {
-
-	case "GET":
-
-		fmt.Println("Forwarding request to port: " + forwardPorts[proxyIndex])
-
-		proxies[proxyIndex].ServeHTTP(w, r)
-
-	}
+	proxies[proxyIndex].ServeHTTP(w, r)
 
 }
 
-func StartNginxContainers() {
+func StartNginxContainers(ctx *context.Context, cli *client.Client) {
 	fmt.Println("Pulling latest nginx image...")
-
-	ctx := context.Background()
-	cli, err := client.NewEnvClient()
-
-	if err != nil {
-		panic(err)
-	}
 
 	var options types.ImagePullOptions
 
-	reader, err := cli.ImagePull(ctx, imageName, options)
+	reader, err := cli.ImagePull(*ctx, imageName, options)
 
 	if err != nil {
 		panic(err)
 	}
+
 	io.Copy(os.Stdout, reader)
+
+	wd, _ := os.Getwd()
+	site := path.Join(wd, "site")
 
 	for i := 0; i < len(forwardPorts); i++ {
 
@@ -94,18 +87,19 @@ func StartNginxContainers() {
 		portMap[port] = []nat.PortBinding{pb}
 
 		mounts := []mount.Mount{}
-		m := mount.Mount{Source: "/home/taro/Code/Go/nginx-mini-cluster/site", Target: "/usr/share/nginx/html", Type: mount.TypeBind}
+
+		m := mount.Mount{Source: site, Target: "/usr/share/nginx/html", Type: mount.TypeBind}
 		mounts = append(mounts, m)
 
 		var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: mounts}
 
-		resp, err := cli.ContainerCreate(ctx, &config, &hostConfig, nil, containerName+"-"+forwardPorts[i])
+		resp, err := cli.ContainerCreate(*ctx, &config, &hostConfig, nil, containerName+"-"+forwardPorts[i])
 
 		if err != nil {
 			panic(err)
 		}
 
-		if err := cli.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		if err := cli.ContainerStart(*ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
 			panic(err)
 		}
 
@@ -113,11 +107,41 @@ func StartNginxContainers() {
 	}
 
 	defer reader.Close()
+
+}
+
+func handleCtrlC(ctx *context.Context, cli *client.Client) {
+
+	c := make(chan os.Signal)
+
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-c
+		duration, _ := time.ParseDuration("1m")
+
+		for i := 0; i < len(forwardPorts); i++ {
+			fmt.Println("Stopping " + containerName + " - " + forwardPorts[i] + "...")
+			cli.ContainerStop(*ctx, containerName+"-"+forwardPorts[i], &duration)
+		}
+
+		os.Exit(0)
+	}()
+
 }
 
 func Run() {
 
-	StartNginxContainers()
+	ctx := context.Background()
+	cli, err := client.NewEnvClient()
+
+	if err != nil {
+		panic(err)
+	}
+
+	StartNginxContainers(&ctx, cli)
+
+	handleCtrlC(&ctx, cli)
 
 	for i := 0; i < len(forwardPorts); i++ {
 		origin, _ := url.Parse("http://localhost:" + forwardPorts[i] + "/")
