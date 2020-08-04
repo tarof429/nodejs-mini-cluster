@@ -99,7 +99,7 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 					panic(err)
 				}
 
-				handleCtrlC(ctx, cli, configs[proxyIndex])
+				HandleCtrlC(ctx, cli, configs[proxyIndex])
 
 				proxy = CreateReverseProxy(configs[proxyIndex])
 
@@ -163,7 +163,8 @@ func StopContainer(ctx *context.Context, cli *client.Client, body container.Cont
 	return cli.ContainerStop(*ctx, body.ID, &duration)
 }
 
-func handleCtrlC(ctx *context.Context, cli *client.Client, config ContainerConfig) {
+// HandleCtrlC stops a container if it receives a signal.
+func HandleCtrlC(ctx *context.Context, cli *client.Client, config ContainerConfig) {
 
 	c := make(chan os.Signal)
 
@@ -204,7 +205,7 @@ func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 	return httputil.ReverseProxy{Director: director}
 }
 
-func Run() {
+func Run(site string) {
 
 	ctx := context.Background()
 	cli, err := client.NewEnvClient()
@@ -213,7 +214,7 @@ func Run() {
 		panic(err)
 	}
 
-	mounts := []mount.Mount{mount.Mount{Source: getDefaultSite(), Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
+	mounts := []mount.Mount{mount.Mount{Source: site, Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
 
 	var policy container.RestartPolicy
 	policy.IsAlways()
@@ -234,7 +235,7 @@ func Run() {
 			panic(err)
 		}
 
-		handleCtrlC(&ctx, cli, config)
+		HandleCtrlC(&ctx, cli, config)
 
 		proxy := CreateReverseProxy(config)
 
