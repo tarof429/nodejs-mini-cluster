@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 
 	"github.com/docker/docker/api/types"
@@ -15,7 +18,7 @@ import (
 )
 
 // internal counter used to track which port to forward requests to
-var forwardPortCounter int
+var proxyIndex int
 
 // List of forwarding ports
 var forwardPorts = []string{"3001", "3002"}
@@ -25,36 +28,39 @@ var forwardPorts = []string{"3001", "3002"}
 const imageName = "docker.io/library/nginx:latest"
 const containerName = "nginx"
 
-func GetRoundRobinForwardPort() string {
+var proxies = []httputil.ReverseProxy{}
 
-	forwardPortCounter++
+func GetRoundRobinProxyIndex() int {
 
-	if forwardPortCounter == len(forwardPorts) {
-		forwardPortCounter = 0
+	proxyIndex++
+
+	if proxyIndex == len(forwardPorts) {
+		proxyIndex = 0
 	}
 
-	fmt.Println("Forwarding to port: " + forwardPorts[forwardPortCounter])
+	fmt.Println("Forwarding to port: " + forwardPorts[proxyIndex])
 
-	return forwardPorts[forwardPortCounter]
+	return proxyIndex
 }
 
 func RoundRobinHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Called RoundRobinHandler")
+	fmt.Println("Proxying request")
 
-	forwardPort := GetRoundRobinForwardPort()
+	proxyIndex := GetRoundRobinProxyIndex()
 
 	switch method := r.Method; method {
 
 	case "GET":
 
-		fmt.Println("Forwarding request to port: " + forwardPort)
+		fmt.Println("Forwarding request to port: " + forwardPorts[proxyIndex])
 
-		http.Redirect(w, r, "http://localhost:"+forwardPort, http.StatusOK)
+		proxies[proxyIndex].ServeHTTP(w, r)
 
 	}
+
 }
 
-func StartNginx() {
+func StartNginxContainers() {
 	fmt.Println("Pulling latest nginx image...")
 
 	ctx := context.Background()
@@ -111,17 +117,25 @@ func StartNginx() {
 
 func Run() {
 
-	StartNginx()
+	StartNginxContainers()
+
+	for i := 0; i < len(forwardPorts); i++ {
+		origin, _ := url.Parse("http://localhost:" + forwardPorts[i] + "/")
+
+		director := func(req *http.Request) {
+			req.Header.Add("X-Forwarded-Host", req.Host)
+			req.Header.Add("X-Origin-Host", origin.Host)
+			req.URL.Scheme = "http"
+			req.URL.Host = origin.Host
+		}
+
+		proxy := httputil.ReverseProxy{Director: director}
+
+		proxies = append(proxies, proxy)
+	}
 
 	http.HandleFunc("/", RoundRobinHandler)
-	fmt.Println("Server starting...")
 
-	http.ListenAndServe(":3000", nil)
+	log.Fatal(http.ListenAndServe(":3000", nil))
+
 }
-
-// func main() {
-// 	http.HandleFunc("/", RoundRobinHandler)
-// 	fmt.Println("Server starting...")
-
-// 	http.ListenAndServe(":3000", nil)
-// }
