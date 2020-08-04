@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -42,15 +43,15 @@ type ContainerConfig struct {
 	mountPoint    []mount.Mount
 }
 
-func GetRoundRobinProxyIndex() int {
+func AddProxy(proxy httputil.ReverseProxy) {
+	proxies = append(proxies, proxy)
+}
+func RemoveProxy(index int) {
+	// Set the current proxy to the last proxy in the list
+	proxies[index] = proxies[len(proxies)-1]
 
-	proxyIndex++
-
-	if proxyIndex == len(configs) {
-		proxyIndex = 0
-	}
-
-	return proxyIndex
+	// Return a slice of proxies, which exludes the last one (effectively orphaning it)
+	proxies = proxies[:len(proxies)-1]
 }
 
 func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.ReverseProxy) {
@@ -59,9 +60,11 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 
+		fmt.Println("Number of proxies: " + strconv.Itoa(len(proxies)))
+
 		proxyIndex++
 
-		if proxyIndex == len(configs) {
+		if proxyIndex == len(proxies) {
 			proxyIndex = 0
 		}
 
@@ -69,8 +72,10 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
 			message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
-			//w.Write([]byte(message))
+
 			log.Println(message)
+
+			RemoveProxy(proxyIndex)
 
 			go func() {
 				err := StopContainer(ctx, cli, configs[proxyIndex].body)
@@ -98,7 +103,8 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 				proxy = CreateReverseProxy(configs[proxyIndex])
 
-				proxies[proxyIndex] = proxy
+				//proxies[proxyIndex] = proxy
+				AddProxy(proxy)
 			}()
 
 		}
@@ -106,25 +112,8 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 		log.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
 
 		proxy.ServeHTTP(w, r)
-
 	})
 
-}
-
-func RoundRobinHandler(w http.ResponseWriter, r *http.Request) {
-
-	proxyIndex := GetRoundRobinProxyIndex()
-
-	fmt.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
-
-	proxy := proxies[proxyIndex]
-
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
-		message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
-		w.Write([]byte(message))
-
-	}
-	proxy.ServeHTTP(w, r)
 }
 
 func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerConfig) (container.ContainerCreateCreatedBody, error) {
@@ -173,71 +162,6 @@ func StopContainer(ctx *context.Context, cli *client.Client, body container.Cont
 
 	return cli.ContainerStop(*ctx, body.ID, &duration)
 }
-
-// func StartContainers(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
-
-// 	var options types.ImagePullOptions
-
-// 	reader, err := cli.ImagePull(*ctx, imageName, options)
-
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	io.Copy(os.Stdout, reader)
-
-// 	for i := 0; i < len(configs); i++ {
-
-// 		// Portable container configuration
-// 		var config = container.Config{Image: configs[i].imageName}
-
-// 		// Non-portable container configuraton
-// 		var portMap = make(nat.PortMap)
-// 		port, _ := nat.NewPort("tcp", configs[i].containerPort)
-// 		var pb nat.PortBinding
-// 		pb.HostIP = "0.0.0.0"
-// 		pb.HostPort = configs[i].hostPort
-
-// 		portMap[port] = []nat.PortBinding{pb}
-
-// 		var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: configs[i].mountPoint}
-
-// 		resp, err := cli.ContainerCreate(*ctx, &config, &hostConfig, nil, configs[i].containerName)
-
-// 		if err != nil {
-// 			panic(err)
-// 		}
-
-// 		if err := cli.ContainerStart(*ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
-// 			panic(err)
-// 		}
-
-// 		fmt.Println(resp.ID)
-// 	}
-
-// 	defer reader.Close()
-
-// }
-
-// func handleCtrlCX(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
-
-// 	c := make(chan os.Signal)
-
-// 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-// 	go func() {
-// 		<-c
-// 		duration, _ := time.ParseDuration("1m")
-
-// 		for i := 0; i < len(configs); i++ {
-// 			fmt.Println("Stopping " + configs[i].containerName + " - " + configs[i].hostPort + "...")
-// 			cli.ContainerStop(*ctx, configs[i].containerName, &duration)
-// 		}
-
-// 		os.Exit(0)
-// 	}()
-
-// }
 
 func handleCtrlC(ctx *context.Context, cli *client.Client, config ContainerConfig) {
 
@@ -314,12 +238,11 @@ func Run() {
 
 		proxy := CreateReverseProxy(config)
 
-		proxies = append(proxies, proxy)
+		AddProxy(proxy)
+
 	}
 
-	//http.HandleFunc("/", RoundRobinHandler)
 	DoRoundRobin(&ctx, cli, proxies)
 
 	log.Fatal(http.ListenAndServe(":"+serverPort, nil))
-
 }
