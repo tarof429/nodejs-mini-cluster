@@ -38,10 +38,11 @@ type ContainerConfig struct {
 	containerPort string
 	imageName     string
 	containerName string
+	body          container.ContainerCreateCreatedBody
 	mountPoint    []mount.Mount
 }
 
-func GetRoundRobinProxyIndex(configs []ContainerConfig) int {
+func GetRoundRobinProxyIndex() int {
 
 	proxyIndex++
 
@@ -49,22 +50,84 @@ func GetRoundRobinProxyIndex(configs []ContainerConfig) int {
 		proxyIndex = 0
 	}
 
-	fmt.Println("Forwarding to port: " + configs[proxyIndex].hostPort)
-
 	return proxyIndex
 }
 
-func RoundRobinHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
+func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.ReverseProxy) {
 
-	proxyIndex := GetRoundRobinProxyIndex(configs)
+	var proxyIndex = 0
 
-	proxies[proxyIndex].ServeHTTP(w, r)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+		proxyIndex++
+
+		if proxyIndex == len(configs) {
+			proxyIndex = 0
+		}
+
+		proxy := proxies[proxyIndex]
+
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
+			message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
+			//w.Write([]byte(message))
+			log.Println(message)
+
+			go func() {
+				err := StopContainer(ctx, cli, configs[proxyIndex].body)
+
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				body, err := CreateContainer(ctx, cli, configs[proxyIndex])
+
+				if err != nil {
+					panic(err)
+				}
+
+				// Update container ID
+				configs[proxyIndex].body = body
+
+				err = StartContainer(ctx, cli, body)
+
+				if err != nil {
+					panic(err)
+				}
+
+				handleCtrlC(ctx, cli, configs[proxyIndex])
+
+				proxy = CreateReverseProxy(configs[proxyIndex])
+
+				proxies[proxyIndex] = proxy
+			}()
+
+		}
+
+		log.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
+
+		proxy.ServeHTTP(w, r)
+
+	})
 
 }
 
-func StartNginxContainers(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
-	fmt.Println("Pulling latest nginx image...")
+func RoundRobinHandler(w http.ResponseWriter, r *http.Request) {
+
+	proxyIndex := GetRoundRobinProxyIndex()
+
+	fmt.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
+
+	proxy := proxies[proxyIndex]
+
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
+		message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
+		w.Write([]byte(message))
+
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerConfig) (container.ContainerCreateCreatedBody, error) {
 
 	var options types.ImagePullOptions
 
@@ -76,40 +139,107 @@ func StartNginxContainers(ctx *context.Context, cli *client.Client, configs []Co
 
 	io.Copy(os.Stdout, reader)
 
-	for i := 0; i < len(configs); i++ {
-
-		// Portable container configuration
-		var config = container.Config{Image: configs[i].imageName}
-
-		// Non-portable container configuraton
-		var portMap = make(nat.PortMap)
-		port, _ := nat.NewPort("tcp", configs[i].containerPort)
-		var pb nat.PortBinding
-		pb.HostIP = "0.0.0.0"
-		pb.HostPort = configs[i].hostPort
-
-		portMap[port] = []nat.PortBinding{pb}
-
-		var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: configs[i].mountPoint}
-
-		resp, err := cli.ContainerCreate(*ctx, &config, &hostConfig, nil, configs[i].containerName)
-
-		if err != nil {
-			panic(err)
-		}
-
-		if err := cli.ContainerStart(*ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
-			panic(err)
-		}
-
-		fmt.Println(resp.ID)
-	}
-
 	defer reader.Close()
 
+	// Portable container configuration
+	var containerConfig = container.Config{Image: config.imageName}
+
+	// Non-portable container configuraton
+	var portMap = make(nat.PortMap)
+	port, _ := nat.NewPort("tcp", config.containerPort)
+	var pb nat.PortBinding
+	pb.HostIP = "0.0.0.0"
+	pb.HostPort = config.hostPort
+
+	portMap[port] = []nat.PortBinding{pb}
+
+	var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: config.mountPoint}
+
+	body, err := cli.ContainerCreate(*ctx, &containerConfig, &hostConfig, nil, config.containerName)
+
+	config.body = body
+
+	return body, err
 }
 
-func handleCtrlC(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
+func StartContainer(ctx *context.Context, cli *client.Client, body container.ContainerCreateCreatedBody) error {
+
+	return cli.ContainerStart(*ctx, body.ID, types.ContainerStartOptions{})
+}
+
+func StopContainer(ctx *context.Context, cli *client.Client, body container.ContainerCreateCreatedBody) error {
+
+	duration, _ := time.ParseDuration("1m")
+
+	return cli.ContainerStop(*ctx, body.ID, &duration)
+}
+
+// func StartContainers(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
+
+// 	var options types.ImagePullOptions
+
+// 	reader, err := cli.ImagePull(*ctx, imageName, options)
+
+// 	if err != nil {
+// 		panic(err)
+// 	}
+
+// 	io.Copy(os.Stdout, reader)
+
+// 	for i := 0; i < len(configs); i++ {
+
+// 		// Portable container configuration
+// 		var config = container.Config{Image: configs[i].imageName}
+
+// 		// Non-portable container configuraton
+// 		var portMap = make(nat.PortMap)
+// 		port, _ := nat.NewPort("tcp", configs[i].containerPort)
+// 		var pb nat.PortBinding
+// 		pb.HostIP = "0.0.0.0"
+// 		pb.HostPort = configs[i].hostPort
+
+// 		portMap[port] = []nat.PortBinding{pb}
+
+// 		var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: configs[i].mountPoint}
+
+// 		resp, err := cli.ContainerCreate(*ctx, &config, &hostConfig, nil, configs[i].containerName)
+
+// 		if err != nil {
+// 			panic(err)
+// 		}
+
+// 		if err := cli.ContainerStart(*ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+// 			panic(err)
+// 		}
+
+// 		fmt.Println(resp.ID)
+// 	}
+
+// 	defer reader.Close()
+
+// }
+
+// func handleCtrlCX(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
+
+// 	c := make(chan os.Signal)
+
+// 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+// 	go func() {
+// 		<-c
+// 		duration, _ := time.ParseDuration("1m")
+
+// 		for i := 0; i < len(configs); i++ {
+// 			fmt.Println("Stopping " + configs[i].containerName + " - " + configs[i].hostPort + "...")
+// 			cli.ContainerStop(*ctx, configs[i].containerName, &duration)
+// 		}
+
+// 		os.Exit(0)
+// 	}()
+
+// }
+
+func handleCtrlC(ctx *context.Context, cli *client.Client, config ContainerConfig) {
 
 	c := make(chan os.Signal)
 
@@ -119,10 +249,8 @@ func handleCtrlC(ctx *context.Context, cli *client.Client, configs []ContainerCo
 		<-c
 		duration, _ := time.ParseDuration("1m")
 
-		for i := 0; i < len(configs); i++ {
-			fmt.Println("Stopping " + configs[i].containerName + " - " + configs[i].hostPort + "...")
-			cli.ContainerStop(*ctx, configs[i].containerName, &duration)
-		}
+		fmt.Println("Stopping " + config.containerName + " - " + config.hostPort + "...")
+		cli.ContainerStop(*ctx, config.containerName, &duration)
 
 		os.Exit(0)
 	}()
@@ -136,6 +264,22 @@ func getDefaultSite() string {
 	return site
 }
 
+func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
+
+	origin, _ := url.Parse("http://localhost:" + config.hostPort + "/")
+
+	//fmt.Println("origin: " + origin.Host)
+
+	director := func(req *http.Request) {
+		req.Header.Add("X-Forwarded-Host", req.Host)
+		req.Header.Add("X-Origin-Host", origin.Host)
+		req.URL.Scheme = "http"
+		req.URL.Host = origin.Host
+	}
+
+	return httputil.ReverseProxy{Director: director}
+}
+
 func Run() {
 
 	ctx := context.Background()
@@ -147,29 +291,34 @@ func Run() {
 
 	mounts := []mount.Mount{mount.Mount{Source: getDefaultSite(), Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
 
+	var policy container.RestartPolicy
+	policy.IsAlways()
+
 	configs = append(configs, ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName, mountPoint: mounts})
 	configs = append(configs, ContainerConfig{hostPort: "3002", containerPort: "80", containerName: "nginx-3002", imageName: imageName, mountPoint: mounts})
 
-	StartNginxContainers(&ctx, cli, configs)
+	for _, config := range configs {
+		body, err := CreateContainer(&ctx, cli, config)
 
-	handleCtrlC(&ctx, cli, configs)
-
-	for i := 0; i < len(configs); i++ {
-		origin, _ := url.Parse("http://localhost:" + configs[i].hostPort + "/")
-
-		director := func(req *http.Request) {
-			req.Header.Add("X-Forwarded-Host", req.Host)
-			req.Header.Add("X-Origin-Host", origin.Host)
-			req.URL.Scheme = "http"
-			req.URL.Host = origin.Host
+		if err != nil {
+			panic(err)
 		}
 
-		proxy := httputil.ReverseProxy{Director: director}
+		err = StartContainer(&ctx, cli, body)
+
+		if err != nil {
+			panic(err)
+		}
+
+		handleCtrlC(&ctx, cli, config)
+
+		proxy := CreateReverseProxy(config)
 
 		proxies = append(proxies, proxy)
 	}
 
-	http.HandleFunc("/", RoundRobinHandler)
+	//http.HandleFunc("/", RoundRobinHandler)
+	DoRoundRobin(&ctx, cli, proxies)
 
 	log.Fatal(http.ListenAndServe(":"+serverPort, nil))
 
