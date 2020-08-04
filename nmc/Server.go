@@ -24,39 +24,46 @@ import (
 // internal counter used to track which port to forward requests to
 var proxyIndex int
 
-// List of forwarding ports
-var forwardPorts = []string{"3001", "3002"}
-
-//var forwardPorts = []string{"3001"}
+const serverPort = "3000"
 
 const imageName = "docker.io/library/nginx:latest"
 const containerName = "nginx"
 
 var proxies = []httputil.ReverseProxy{}
 
-func GetRoundRobinProxyIndex() int {
+var configs = []ContainerConfig{}
+
+type ContainerConfig struct {
+	hostPort      string
+	containerPort string
+	imageName     string
+	containerName string
+	mountPoint    []mount.Mount
+}
+
+func GetRoundRobinProxyIndex(configs []ContainerConfig) int {
 
 	proxyIndex++
 
-	if proxyIndex == len(forwardPorts) {
+	if proxyIndex == len(configs) {
 		proxyIndex = 0
 	}
 
-	fmt.Println("Forwarding to port: " + forwardPorts[proxyIndex])
+	fmt.Println("Forwarding to port: " + configs[proxyIndex].hostPort)
 
 	return proxyIndex
 }
 
 func RoundRobinHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Forwarding request to port: " + forwardPorts[proxyIndex])
+	fmt.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
 
-	proxyIndex := GetRoundRobinProxyIndex()
+	proxyIndex := GetRoundRobinProxyIndex(configs)
 
 	proxies[proxyIndex].ServeHTTP(w, r)
 
 }
 
-func StartNginxContainers(ctx *context.Context, cli *client.Client) {
+func StartNginxContainers(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
 	fmt.Println("Pulling latest nginx image...")
 
 	var options types.ImagePullOptions
@@ -69,31 +76,23 @@ func StartNginxContainers(ctx *context.Context, cli *client.Client) {
 
 	io.Copy(os.Stdout, reader)
 
-	wd, _ := os.Getwd()
-	site := path.Join(wd, "site")
-
-	for i := 0; i < len(forwardPorts); i++ {
+	for i := 0; i < len(configs); i++ {
 
 		// Portable container configuration
-		var config = container.Config{Image: imageName}
+		var config = container.Config{Image: configs[i].imageName}
 
 		// Non-portable container configuraton
 		var portMap = make(nat.PortMap)
-		port, _ := nat.NewPort("tcp", "80")
+		port, _ := nat.NewPort("tcp", configs[i].containerPort)
 		var pb nat.PortBinding
 		pb.HostIP = "0.0.0.0"
-		pb.HostPort = forwardPorts[i]
+		pb.HostPort = configs[i].hostPort
 
 		portMap[port] = []nat.PortBinding{pb}
 
-		mounts := []mount.Mount{}
+		var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: configs[i].mountPoint}
 
-		m := mount.Mount{Source: site, Target: "/usr/share/nginx/html", Type: mount.TypeBind}
-		mounts = append(mounts, m)
-
-		var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: mounts}
-
-		resp, err := cli.ContainerCreate(*ctx, &config, &hostConfig, nil, containerName+"-"+forwardPorts[i])
+		resp, err := cli.ContainerCreate(*ctx, &config, &hostConfig, nil, configs[i].containerName)
 
 		if err != nil {
 			panic(err)
@@ -110,7 +109,7 @@ func StartNginxContainers(ctx *context.Context, cli *client.Client) {
 
 }
 
-func handleCtrlC(ctx *context.Context, cli *client.Client) {
+func handleCtrlC(ctx *context.Context, cli *client.Client, configs []ContainerConfig) {
 
 	c := make(chan os.Signal)
 
@@ -120,14 +119,21 @@ func handleCtrlC(ctx *context.Context, cli *client.Client) {
 		<-c
 		duration, _ := time.ParseDuration("1m")
 
-		for i := 0; i < len(forwardPorts); i++ {
-			fmt.Println("Stopping " + containerName + " - " + forwardPorts[i] + "...")
-			cli.ContainerStop(*ctx, containerName+"-"+forwardPorts[i], &duration)
+		for i := 0; i < len(configs); i++ {
+			fmt.Println("Stopping " + configs[i].containerName + " - " + configs[i].hostPort + "...")
+			cli.ContainerStop(*ctx, configs[i].containerName, &duration)
 		}
 
 		os.Exit(0)
 	}()
 
+}
+
+func getDefaultSite() string {
+
+	wd, _ := os.Getwd()
+	site := path.Join(wd, "site")
+	return site
 }
 
 func Run() {
@@ -139,12 +145,17 @@ func Run() {
 		panic(err)
 	}
 
-	StartNginxContainers(&ctx, cli)
+	mounts := []mount.Mount{mount.Mount{Source: getDefaultSite(), Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
 
-	handleCtrlC(&ctx, cli)
+	configs = append(configs, ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName, mountPoint: mounts})
+	configs = append(configs, ContainerConfig{hostPort: "3002", containerPort: "80", containerName: "nginx-3002", imageName: imageName, mountPoint: mounts})
 
-	for i := 0; i < len(forwardPorts); i++ {
-		origin, _ := url.Parse("http://localhost:" + forwardPorts[i] + "/")
+	StartNginxContainers(&ctx, cli, configs)
+
+	handleCtrlC(&ctx, cli, configs)
+
+	for i := 0; i < len(configs); i++ {
+		origin, _ := url.Parse("http://localhost:" + configs[i].hostPort + "/")
 
 		director := func(req *http.Request) {
 			req.Header.Add("X-Forwarded-Host", req.Host)
@@ -160,6 +171,6 @@ func Run() {
 
 	http.HandleFunc("/", RoundRobinHandler)
 
-	log.Fatal(http.ListenAndServe(":3000", nil))
+	log.Fatal(http.ListenAndServe(":"+serverPort, nil))
 
 }
