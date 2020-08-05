@@ -78,27 +78,35 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 			// Let the client know that the request failed
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 
-			RemoveProxy(proxyIndex)
-
 			go func() {
+				RemoveProxy(proxyIndex)
+
+				log.Println("Stopping container")
+
 				err := StopContainer(ctx, cli, configs[proxyIndex].body)
 
 				if err != nil {
-					fmt.Println(err)
+					log.Println("Container could not be stopped")
 				}
+
+				log.Println("Creating container")
 
 				body, err := CreateContainer(ctx, cli, configs[proxyIndex])
 
 				if err != nil {
+					log.Println("Container could not be created")
 					panic(err)
 				}
 
 				// Update container ID
 				configs[proxyIndex].body = body
 
+				log.Println("Starting container")
+
 				err = StartContainer(ctx, cli, body)
 
 				if err != nil {
+					log.Println("Container could not be started")
 					panic(err)
 				}
 
@@ -107,7 +115,11 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 				proxy = CreateReverseProxy(configs[proxyIndex])
 
 				AddProxy(proxy)
+
+				log.Println("Proxy available")
 			}()
+			log.Println("Re-creating proxy...")
+			return
 
 		}
 
