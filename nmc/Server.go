@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -23,9 +24,9 @@ import (
 // internal counter used to track which port to forward requests to
 var proxyIndex int
 
-const serverPort = "3000"
+//const serverPort = "3000"
 
-const imageName = "docker.io/library/nginx:latest"
+const imageName = "docker.io/library/nginx"
 const containerName = "nginx"
 
 var proxies = []httputil.ReverseProxy{}
@@ -136,7 +137,8 @@ func PullImage(ctx *context.Context, cli *client.Client, imageName string, optio
 	reader, err := cli.ImagePull(*ctx, imageName, options)
 
 	if err != nil {
-		panic(err)
+		log.Fatal("Unable to pull image " + imageName)
+		//panic(err)
 	}
 
 	defer reader.Close()
@@ -222,7 +224,7 @@ func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 }
 
 // Run runs the proxies and main HTTP server. The site is the path where files will be served.
-func Run(site string) {
+func Run(site string, count int, serverPort int, port int, imageVersion string) {
 
 	ctx := context.Background()
 
@@ -234,7 +236,7 @@ func Run(site string) {
 
 	var options types.ImagePullOptions
 
-	buf, err := PullImage(&ctx, cli, imageName, options)
+	buf, err := PullImage(&ctx, cli, imageName+":"+imageVersion, options)
 
 	if err != nil {
 		panic(err)
@@ -247,8 +249,13 @@ func Run(site string) {
 	var policy container.RestartPolicy
 	policy.IsAlways()
 
-	configs = append(configs, ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName, mountPoint: mounts})
-	configs = append(configs, ContainerConfig{hostPort: "3002", containerPort: "80", containerName: "nginx-3002", imageName: imageName, mountPoint: mounts})
+	// Start as many proxies as the user specified, default is specified in root.go
+	for i := 0; i < count; i++ {
+		configs = append(configs, ContainerConfig{hostPort: strconv.Itoa(port + i), containerPort: "80", containerName: "nginx-" + strconv.Itoa(port+i), imageName: imageName, mountPoint: mounts})
+	}
+
+	// configs = append(configs, ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName, mountPoint: mounts})
+	// configs = append(configs, ContainerConfig{hostPort: "3002", containerPort: "80", containerName: "nginx-3002", imageName: imageName, mountPoint: mounts})
 
 	for _, config := range configs {
 		body, err := CreateContainer(&ctx, cli, config)
@@ -273,5 +280,5 @@ func Run(site string) {
 
 	DoRoundRobin(&ctx, cli, proxies)
 
-	log.Fatal(http.ListenAndServe(":"+serverPort, nil))
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(serverPort), nil))
 }
