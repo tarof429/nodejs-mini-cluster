@@ -8,8 +8,11 @@ require (
 	github.com/docker/distribution v2.7.1+incompatible // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
+	github.com/fatih/color v1.9.0 // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/julienschmidt/httprouter v1.3.0 // indirect
+	github.com/mattn/go-colorable v0.1.7 // indirect
+	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
@@ -17,8 +20,9 @@ require (
 	github.com/spf13/cobra v1.0.0
 	github.com/spf13/viper v1.7.1
 	github.com/tarof429/nmc v0.0.0
+	github.com/theckman/yacspin v0.8.0 // indirect
 	golang.org/x/net v0.0.0-20200707034311-ab3426394381 // indirect
-	golang.org/x/sys v0.0.0-20200803150936-fd5f0c170ac3 // indirect
+	golang.org/x/sys v0.0.0-20200803210538-64077c9b5642 // indirect
 )
 
 replace github.com/tarof429/nmc => ./nmc

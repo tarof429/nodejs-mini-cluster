@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	"github.com/theckman/yacspin"
 )
 
 // internal counter used to track which port to forward requests to
@@ -226,6 +227,21 @@ func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 // Run runs the proxies and main HTTP server. The site is the path where files will be served.
 func Run(site string, count int, serverPort int, port int, imageVersion string) {
 
+	//log.Println("Starting nmc...")
+
+	cfg := yacspin.Config{
+		Frequency:       100 * time.Millisecond,
+		CharSet:         yacspin.CharSets[25],
+		Suffix:          " Starting Nginx Mini-cluster... ",
+		SuffixAutoColon: true,
+		StopCharacter:   "✓",
+		StopColors:      []string{"fgGreen"},
+	}
+
+	spinner, _ := yacspin.New(cfg)
+
+	spinner.Start()
+
 	ctx := context.Background()
 
 	cli, err := client.NewEnvClient()
@@ -239,10 +255,9 @@ func Run(site string, count int, serverPort int, port int, imageVersion string) 
 	buf, err := PullImage(&ctx, cli, imageName+":"+imageVersion, options)
 
 	if err != nil {
+		log.Println(buf.String())
 		panic(err)
 	}
-
-	fmt.Println(buf.String())
 
 	mounts := []mount.Mount{mount.Mount{Source: site, Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
 
@@ -280,5 +295,12 @@ func Run(site string, count int, serverPort int, port int, imageVersion string) 
 
 	DoRoundRobin(&ctx, cli, proxies)
 
-	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(serverPort), nil))
+	spinner.Stop()
+
+	err = http.ListenAndServe(":"+strconv.Itoa(serverPort), nil)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
 }
