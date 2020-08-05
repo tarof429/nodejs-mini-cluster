@@ -1,17 +1,15 @@
 package nmc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -43,9 +41,12 @@ type ContainerConfig struct {
 	mountPoint    []mount.Mount
 }
 
+// AddProxy adds a reverse proxy to proxies
 func AddProxy(proxy httputil.ReverseProxy) {
 	proxies = append(proxies, proxy)
 }
+
+// RemoveProxy removes a reverse proxy from proxies
 func RemoveProxy(index int) {
 	// Set the current proxy to the last proxy in the list
 	proxies[index] = proxies[len(proxies)-1]
@@ -54,13 +55,12 @@ func RemoveProxy(index int) {
 	proxies = proxies[:len(proxies)-1]
 }
 
+// DoRoundRobin proxies each request to the next proxy.
 func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.ReverseProxy) {
 
 	var proxyIndex = 0
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-
-		fmt.Println("Number of proxies: " + strconv.Itoa(len(proxies)))
 
 		proxyIndex++
 
@@ -74,6 +74,9 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 			message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
 
 			log.Println(message)
+
+			// Let the client know that the request failed
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 
 			RemoveProxy(proxyIndex)
 
@@ -103,7 +106,6 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 				proxy = CreateReverseProxy(configs[proxyIndex])
 
-				//proxies[proxyIndex] = proxy
 				AddProxy(proxy)
 			}()
 
@@ -116,9 +118,8 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 }
 
-func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerConfig) (container.ContainerCreateCreatedBody, error) {
-
-	var options types.ImagePullOptions
+// PullImage pulls an image
+func PullImage(ctx *context.Context, cli *client.Client, imageName string, options types.ImagePullOptions) (*bytes.Buffer, error) {
 
 	reader, err := cli.ImagePull(*ctx, imageName, options)
 
@@ -126,9 +127,18 @@ func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerC
 		panic(err)
 	}
 
-	io.Copy(os.Stdout, reader)
-
 	defer reader.Close()
+
+	// Create a pointer to a buffer that will hold the output
+	buf := new(bytes.Buffer)
+
+	buf.ReadFrom(reader)
+
+	return buf, err
+}
+
+// CreateContainer creates a container from ContainerConfig
+func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerConfig) (container.ContainerCreateCreatedBody, error) {
 
 	// Portable container configuration
 	var containerConfig = container.Config{Image: config.imageName}
@@ -151,11 +161,13 @@ func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerC
 	return body, err
 }
 
+// StartContainer starts a container
 func StartContainer(ctx *context.Context, cli *client.Client, body container.ContainerCreateCreatedBody) error {
 
 	return cli.ContainerStart(*ctx, body.ID, types.ContainerStartOptions{})
 }
 
+// StopContainer stops a container
 func StopContainer(ctx *context.Context, cli *client.Client, body container.ContainerCreateCreatedBody) error {
 
 	duration, _ := time.ParseDuration("1m")
@@ -182,18 +194,10 @@ func HandleCtrlC(ctx *context.Context, cli *client.Client, config ContainerConfi
 
 }
 
-func getDefaultSite() string {
-
-	wd, _ := os.Getwd()
-	site := path.Join(wd, "site")
-	return site
-}
-
+// CreateReverseProxy creates a reverse proxy
 func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 
 	origin, _ := url.Parse("http://localhost:" + config.hostPort + "/")
-
-	//fmt.Println("origin: " + origin.Host)
 
 	director := func(req *http.Request) {
 		req.Header.Add("X-Forwarded-Host", req.Host)
@@ -205,14 +209,26 @@ func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 	return httputil.ReverseProxy{Director: director}
 }
 
+// Run runs the proxies and main HTTP server. The site is the path where files will be served.
 func Run(site string) {
 
 	ctx := context.Background()
+
 	cli, err := client.NewEnvClient()
 
 	if err != nil {
 		panic(err)
 	}
+
+	var options types.ImagePullOptions
+
+	buf, err := PullImage(&ctx, cli, imageName, options)
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(buf.String())
 
 	mounts := []mount.Mount{mount.Mount{Source: site, Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
 
