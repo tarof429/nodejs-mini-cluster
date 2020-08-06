@@ -156,20 +156,26 @@ func PullImage(ctx *context.Context, cli *client.Client, imageName string, optio
 func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerConfig) (container.ContainerCreateCreatedBody, error) {
 
 	// Portable container configuration
-	var containerConfig = container.Config{Image: config.imageName}
+	var containerConfig = &container.Config{
+		Image:        config.imageName,
+		Tty:          true,
+		AttachStdout: true,
+		AttachStderr: true,
+		ExposedPorts: nat.PortSet{
+			nat.Port("80/tcp"): {},
+		},
+	}
 
-	// Non-portable container configuraton
-	var portMap = make(nat.PortMap)
-	port, _ := nat.NewPort("tcp", config.containerPort)
-	var pb nat.PortBinding
-	pb.HostIP = "0.0.0.0"
-	pb.HostPort = config.hostPort
+	hostConfig := &container.HostConfig{
+		Binds: []string{
+			"/var/run/docker.sock:/var/run/docker.sock",
+		},
+		PortBindings: nat.PortMap{
+			nat.Port("80/tcp"): []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: config.hostPort}},
+		},
+	}
 
-	portMap[port] = []nat.PortBinding{pb}
-
-	var hostConfig = container.HostConfig{AutoRemove: true, PortBindings: portMap, Mounts: config.mountPoint}
-
-	body, err := cli.ContainerCreate(*ctx, &containerConfig, &hostConfig, nil, config.containerName)
+	body, err := cli.ContainerCreate(*ctx, containerConfig, hostConfig, nil, config.containerName)
 
 	config.body = body
 
