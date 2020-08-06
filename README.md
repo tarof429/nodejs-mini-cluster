@@ -1,11 +1,54 @@
 # NGINX Mini-Cluster
 
-NGINX Mini-Cluster is a CLI application that runs Nginx docker containers as reverse proxies behind the main HTTP server. Each container is used in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. 
+## Introduction
 
-By default, the server port (the port clients should connect to) is set to 3000. 
+NGINX Mini-Cluster runs an nginx cluster. It lets you serve web sites with some level of high-availability.
+
+## Details
+
+When nc-server starts, it will create and run nginx docker containers when serve the site directory. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. 
+
+By default, the server port (the port clients should connect to) is set to 3000. If you *curl http://localhost:3000*, each request will be routed to each nginx container in round-robin fashion.
 
 ```bash
-$ ./nmc-server --help
+                                                       ----------
+                                                3001   | nginx  |
+                                             --------------------
+                                             |         | docker |
+                           --------------    |         ----------
+ http://localhost:3000 ->  | nmc-server | ---|         ----------
+                           --------------    |         | nginx  |
+                                             ---------------------
+                                                3002   | docker |  
+                                                       ----------
+```
+
+## Example
+
+A sample site is provided. To test, open a terminal and type:
+
+```bash
+$ ./nmc-server --site=`pwd`/demo-site/
+✓ Starting Nginx Mini-cluster...
+```
+
+In another terminal, run:
+
+```bash
+$ curl http://localhost:3000
+```
+
+Back in the first terminal, you should see the following output, illustrating that round-robin clustering is working.
+
+```bash
+2020/08/05 22:16:19 Forwarding request to port: 3002
+2020/08/05 22:16:30 Forwarding request to port: 3001
+```
+
+There are several options for running the server:
+
+```bash
+$ ./nmc-server -h
 A mini cluster using nginx.
 
 Usage:
@@ -17,22 +60,6 @@ Flags:
       --nginx-version string   nginx version (default "latest")
       --port string            Initial port used by the proxies (default "3001")
       --server-port string     Server port (default "3000")
-      --site string            Directory serving files (default "<pwd>/site")
+      --site string            Directory serving files (default "/home/taro/nginx-mini-cluster/site")
   -v, --version                version for nginx-mini-cluster
-
-$ ./nmc-server
-✓ Starting Nginx Mini-cluster...
-2020/08/04 21:17:58 Forwarding request to port: 3002
-2020/08/04 21:18:02 Forwarding request to port: 3001
-2020/08/04 21:18:37 Forwarding request to port: 3002
-2020/08/04 21:18:37 Handling error for 3002
-
-2020/08/04 21:18:37 Re-creating proxy...
-2020/08/04 21:18:37 Stopping container
-2020/08/04 21:18:37 Container could not be stopped
-2020/08/04 21:18:37 Creating container
-2020/08/04 21:18:37 Starting container
-2020/08/04 21:18:38 Proxy available
-2020/08/04 21:18:42 Forwarding request to port: 3001
-2020/08/04 21:18:43 Forwarding request to port: 3002
 ```

@@ -293,7 +293,10 @@ func Run(site string, count int, serverPort int, port int, imageVersion string) 
 
 	}
 
-	DoRoundRobin(&ctx, cli, proxies)
+	// Guard against creating proxies if we don't allow any
+	if count > 0 {
+		DoRoundRobin(&ctx, cli, proxies)
+	}
 
 	spinner.Stop()
 

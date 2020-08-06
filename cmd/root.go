@@ -48,10 +48,10 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if iCount < 1 {
-			fmt.Println("At least 1 proxy must be specified")
-			os.Exit(1)
-		}
+		// if iCount < 1 {
+		// 	fmt.Println("At least 1 proxy must be specified")
+		// 	os.Exit(1)
+		// }
 
 		iPort, err := strconv.Atoi(port)
 
