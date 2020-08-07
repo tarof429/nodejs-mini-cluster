@@ -1,8 +1,11 @@
+default: build
+
 build:
 	go mod download
 	go build -o nmc-server
 
-default: build
+nodejs:
+	docker build -t nodejs.org:latest .
 
 test:
 	(cd nmc; go test -v)

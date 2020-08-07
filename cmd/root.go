@@ -18,7 +18,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -26,11 +25,8 @@ import (
 )
 
 // Flags
-var site string
-var count string
 var port string
 var serverPort string
-var nginxVersion string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -40,18 +36,6 @@ var rootCmd = &cobra.Command{
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
-
-		iCount, err := strconv.Atoi(count)
-
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		// if iCount < 1 {
-		// 	fmt.Println("At least 1 proxy must be specified")
-		// 	os.Exit(1)
-		// }
 
 		iPort, err := strconv.Atoi(port)
 
@@ -67,7 +51,7 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		nmc.Run(site, iCount, serverPort, iPort, nginxVersion)
+		nmc.Run(serverPort, iPort)
 
 	},
 }
@@ -84,17 +68,9 @@ func Execute() {
 func init() {
 	//cobra.OnInitialize(initConfig)
 
-	// Default values
-	wd, _ := os.Getwd()
-	site = path.Join(wd, "site")
-
-	count = "2"
-
 	port = "3001"
 
 	serverPort = "3000"
-
-	nginxVersion = "latest"
 
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
@@ -102,11 +78,8 @@ func init() {
 
 	//rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.nginx-mini-cluster.yaml)")
 
-	rootCmd.PersistentFlags().StringVar(&site, "site", site, "Directory serving files")
-	rootCmd.PersistentFlags().StringVar(&count, "count", count, "Number of reverse proxies")
 	rootCmd.PersistentFlags().StringVar(&port, "port", port, "Initial port used by the proxies")
 	rootCmd.PersistentFlags().StringVar(&serverPort, "server-port", serverPort, "Server port")
-	rootCmd.PersistentFlags().StringVar(&nginxVersion, "nginx-version", nginxVersion, "nginx version")
 
 	rootCmd.Version = "1.0"
 

@@ -11,36 +11,41 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/theckman/yacspin"
 )
 
+const (
+	hostPort         = "3000"
+	imageName        = "nodejs.org"
+	containerName    = "nodejs.org"
+	containerVersion = "latest"
+	nginxURL         = "http://localhost:8080"
+)
+
 // internal counter used to track which port to forward requests to
-var proxyIndex int
+var (
+	proxies     = []httputil.ReverseProxy{} // List of reverse proxies
+	proxyIndex  int                         // The current proxy index
+	configs     = []ContainerConfig{}       // Docker container config
+	serverState chan string                 // Global channel for server state
+)
 
-//const serverPort = "3000"
-
-const imageName = "docker.io/library/nginx"
-const containerName = "nginx"
-
-var proxies = []httputil.ReverseProxy{}
-
-var configs = []ContainerConfig{}
-
+// ContainerConfig is the configuration of the docker container
 type ContainerConfig struct {
-	hostPort      string
-	containerPort string
-	imageName     string
-	containerName string
-	body          container.ContainerCreateCreatedBody
-	mountPoint    []mount.Mount
+	hostPort         string
+	containerPort    string
+	imageName        string
+	containerName    string
+	containerVersion string
+	body             container.ContainerCreateCreatedBody
 }
 
 // AddProxy adds a reverse proxy to proxies
@@ -73,9 +78,17 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 		proxy := proxies[proxyIndex]
 
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
-			message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
 
-			log.Println(message)
+			select {
+			case currentState := <-serverState:
+				if currentState != "Ready" {
+					log.Println("Server is not ready. State is " + currentState + ".")
+					return
+				}
+			default:
+				message := "Handling error for " + configs[proxyIndex].hostPort + "\n"
+				log.Println(message)
+			}
 
 			// Let the client know that the request failed
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
@@ -97,7 +110,7 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 				if err != nil {
 					log.Println("Container could not be created")
-					panic(err)
+					return
 				}
 
 				// Update container ID
@@ -109,7 +122,7 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 
 				if err != nil {
 					log.Println("Container could not be started")
-					panic(err)
+					return
 				}
 
 				HandleCtrlC(ctx, cli, configs[proxyIndex])
@@ -121,13 +134,13 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 				log.Println("Proxy available")
 			}()
 			log.Println("Re-creating proxy...")
-			return
 
 		}
 
 		log.Println("Forwarding request to port: " + configs[proxyIndex].hostPort)
 
 		proxy.ServeHTTP(w, r)
+
 	})
 
 }
@@ -139,7 +152,6 @@ func PullImage(ctx *context.Context, cli *client.Client, imageName string, optio
 
 	if err != nil {
 		log.Fatal("Unable to pull image " + imageName)
-		//panic(err)
 	}
 
 	defer reader.Close()
@@ -155,24 +167,33 @@ func PullImage(ctx *context.Context, cli *client.Client, imageName string, optio
 // CreateContainer creates a container from ContainerConfig
 func CreateContainer(ctx *context.Context, cli *client.Client, config ContainerConfig) (container.ContainerCreateCreatedBody, error) {
 
+	healthConfig := container.HealthConfig{
+		Interval: time.Duration(time.Duration.Minutes(1)),
+		Retries:  3,
+		Test:     []string{"curl", nginxURL},
+		Timeout:  time.Duration(time.Duration.Seconds(10)),
+	}
+
 	// Portable container configuration
-	var containerConfig = &container.Config{
+	containerConfig := &container.Config{
 		Image:        config.imageName,
 		Tty:          true,
 		AttachStdout: true,
 		AttachStderr: true,
 		ExposedPorts: nat.PortSet{
-			nat.Port("80/tcp"): {},
+			nat.Port("8080/tcp"): {},
 		},
+		Healthcheck: &healthConfig,
 	}
 
 	hostConfig := &container.HostConfig{
-		Binds: []string{
-			"/var/run/docker.sock:/var/run/docker.sock",
-		},
+		// Binds: []string{
+		// 	"/var/run/docker.sock:/var/run/docker.sock",
+		// },
 		PortBindings: nat.PortMap{
-			nat.Port("80/tcp"): []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: config.hostPort}},
+			nat.Port("8080/tcp"): []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: config.hostPort}},
 		},
+		AutoRemove: true,
 	}
 
 	body, err := cli.ContainerCreate(*ctx, containerConfig, hostConfig, nil, config.containerName)
@@ -188,11 +209,35 @@ func StartContainer(ctx *context.Context, cli *client.Client, body container.Con
 	return cli.ContainerStart(*ctx, body.ID, types.ContainerStartOptions{})
 }
 
+// HealthcheckURL checks if the URL is up
+func HealthcheckURL(url string, retries int) error {
+
+	var err error
+
+	time.Sleep(3 * time.Second)
+
+	for retry := 0; retry < retries; retry++ {
+
+		_, err = http.Get(url)
+
+		if err != nil {
+			time.Sleep(3 * time.Second)
+		} else {
+			return nil
+		}
+	}
+	return err
+}
+
 // StopContainer stops a container
 func StopContainer(ctx *context.Context, cli *client.Client, body container.ContainerCreateCreatedBody) error {
 
 	duration, _ := time.ParseDuration("1m")
 
+	// if body.ID == "" {
+	// 	serverState <- "Invalid"
+	// }
+	//log.Println("Stopping container with ID " + body.ID)
 	return cli.ContainerStop(*ctx, body.ID, &duration)
 }
 
@@ -231,14 +276,14 @@ func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 }
 
 // Run runs the proxies and main HTTP server. The site is the path where files will be served.
-func Run(site string, count int, serverPort int, port int, imageVersion string) {
+func Run(serverPort int, port int) {
 
-	//log.Println("Starting nmc...")
+	serverState = make(chan string)
 
 	cfg := yacspin.Config{
 		Frequency:       100 * time.Millisecond,
 		CharSet:         yacspin.CharSets[25],
-		Suffix:          " Starting Nginx Mini-cluster... ",
+		Suffix:          " Starting cluster... ",
 		SuffixAutoColon: true,
 		StopCharacter:   "✓",
 		StopColors:      []string{"fgGreen"},
@@ -248,6 +293,10 @@ func Run(site string, count int, serverPort int, port int, imageVersion string) 
 
 	spinner.Start()
 
+	go func() {
+		serverState <- "Starting"
+	}()
+
 	ctx := context.Background()
 
 	cli, err := client.NewEnvClient()
@@ -256,29 +305,16 @@ func Run(site string, count int, serverPort int, port int, imageVersion string) 
 		panic(err)
 	}
 
-	var options types.ImagePullOptions
-
-	buf, err := PullImage(&ctx, cli, imageName+":"+imageVersion, options)
-
-	if err != nil {
-		log.Println(buf.String())
-		panic(err)
-	}
-
-	mounts := []mount.Mount{mount.Mount{Source: site, Target: "/usr/share/nginx/html", Type: mount.TypeBind}}
-
-	var policy container.RestartPolicy
-	policy.IsAlways()
-
 	// Start as many proxies as the user specified, default is specified in root.go
-	for i := 0; i < count; i++ {
-		configs = append(configs, ContainerConfig{hostPort: strconv.Itoa(port + i), containerPort: "80", containerName: "nginx-" + strconv.Itoa(port+i), imageName: imageName, mountPoint: mounts})
-	}
+	// for i := 0; i < count; i++ {
+	// 	configs = append(configs, ContainerConfig{hostPort: strconv.Itoa(port + i), containerPort: "80", containerName: "nginx-" + strconv.Itoa(port+i), imageName: imageName})
+	// }
 
-	// configs = append(configs, ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName, mountPoint: mounts})
-	// configs = append(configs, ContainerConfig{hostPort: "3002", containerPort: "80", containerName: "nginx-3002", imageName: imageName, mountPoint: mounts})
+	configs = append(configs, ContainerConfig{hostPort: "3001", containerPort: "8080", containerName: "nginx-3001", imageName: imageName})
+	configs = append(configs, ContainerConfig{hostPort: "3002", containerPort: "8080", containerName: "nginx-3002", imageName: imageName})
 
 	for _, config := range configs {
+
 		body, err := CreateContainer(&ctx, cli, config)
 
 		if err != nil {
@@ -299,17 +335,29 @@ func Run(site string, count int, serverPort int, port int, imageVersion string) 
 
 	}
 
-	// Guard against creating proxies if we don't allow any
-	if count > 0 {
-		DoRoundRobin(&ctx, cli, proxies)
+	DoRoundRobin(&ctx, cli, proxies)
+
+	// Waitgroup
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+
+	go func() {
+		log.Fatal(http.ListenAndServe(":"+strconv.Itoa(serverPort), nil))
+		wg.Done() // goroutine for http server is done
+	}()
+
+	err = HealthcheckURL("http://localhost:"+hostPort, 30)
+
+	if err != nil {
+		panic(err)
 	}
 
 	spinner.Stop()
 
-	err = http.ListenAndServe(":"+strconv.Itoa(serverPort), nil)
+	// Consume from the channel and set a new state saying that we're ready
+	<-serverState
+	serverState <- "Ready"
 
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	// Wait until waitgroup is done
+	wg.Wait()
 }
