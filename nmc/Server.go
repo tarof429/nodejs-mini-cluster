@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -63,6 +62,7 @@ func RemoveProxy(index int) {
 	}
 }
 
+// MonitorProxies monitors each proxy and restarts if it's not available
 func MonitorProxies(ctx *context.Context, cli *client.Client) {
 
 	//fmt.Println("Monitoring proxies")
@@ -364,13 +364,9 @@ func Run() {
 
 	DoRoundRobin(&ctx, cli, proxies)
 
-	// Waitgroup
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-
 	go func() {
 		log.Fatal(http.ListenAndServe(":"+hostPort, nil))
-		wg.Done() // goroutine for http server is done
+
 	}()
 
 	err = HealthcheckURL("http://localhost:"+hostPort, 30)
@@ -389,6 +385,6 @@ func Run() {
 
 	serverState <- "Ready"
 
-	// Wait until waitgroup is done
-	wg.Wait()
+	for {
+	}
 }
