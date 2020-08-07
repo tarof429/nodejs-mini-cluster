@@ -63,7 +63,29 @@ func RemoveProxy(index int) {
 	}
 }
 
+func MonitorProxies(ctx *context.Context, cli *client.Client) {
+
+	fmt.Println("Monitoring proxies")
+
+	for {
+		time.Sleep(10 * time.Second)
+
+		for index, config := range configs {
+			url := "http://localhost:" + config.hostPort
+			fmt.Println("Checking " + url + " to see if it's healthy")
+			err := HealthcheckURL(url, 3)
+
+			if err != nil {
+				ResetProxy(ctx, cli, index)
+			}
+		}
+	}
+}
+
+// ResetProxy will stop the container (if it's still running) and start it again
 func ResetProxy(ctx *context.Context, cli *client.Client, proxyIndex int) {
+
+	log.Println("Resetting proxy")
 
 	log.Println("Removing proxy")
 	RemoveProxy(proxyIndex)
@@ -355,6 +377,9 @@ func Run() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Periodically check if the proxies are working
+	go MonitorProxies(&ctx, cli)
 
 	spinner.Stop()
 
