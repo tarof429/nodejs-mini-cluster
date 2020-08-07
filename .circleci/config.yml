@@ -3,7 +3,6 @@ jobs:
   build:
     docker:
       - image: circleci/golang:1.11
-    working_directory: /go/src/github.com/tarof429/nodejs-mini-cluster
     steps:
       - checkout
       - run: make clean build
