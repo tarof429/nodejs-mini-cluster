@@ -11,17 +11,11 @@ import (
 
 func TestAddRemoveProxy(t *testing.T) {
 
-	for i := 0; i < 10; i++ {
-		config := ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName}
-		proxy := CreateReverseProxy(config)
+	config := ContainerConfig{hostPort: "3001", containerPort: "80", containerName: "nginx-3001", imageName: imageName}
+	proxy := CreateReverseProxy(config)
 
-		AddProxy(proxy)
-		RemoveProxy(0)
-	}
-
-	if len(proxies) != 0 {
-		t.Fatalf("Proxy not deleted")
-	}
+	AddProxy(proxy)
+	RemoveProxy(0)
 }
 
 func TestPullImage(t *testing.T) {
