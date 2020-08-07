@@ -34,7 +34,7 @@ var (
 	proxies     = []httputil.ReverseProxy{} // List of reverse proxies
 	proxyIndex  int                         // The current proxy index
 	configs     = []ContainerConfig{}       // Docker container config
-	serverState chan string                 // Global channel for server state
+	serverState chan string                 // Global channel for server state. Ready means the server is ready to proxy
 )
 
 // ContainerConfig is the configuration of the docker container
@@ -65,20 +65,21 @@ func RemoveProxy(index int) {
 
 func MonitorProxies(ctx *context.Context, cli *client.Client) {
 
-	fmt.Println("Monitoring proxies")
+	//fmt.Println("Monitoring proxies")
 
 	for {
 		time.Sleep(10 * time.Second)
 
 		for index, config := range configs {
 			url := "http://localhost:" + config.hostPort
-			fmt.Println("Checking " + url + " to see if it's healthy")
+			//fmt.Println("Checking " + url + " to see if it's healthy")
 			err := HealthcheckURL(url, 3)
 
 			if err != nil {
 				ResetProxy(ctx, cli, index)
 			}
 		}
+
 	}
 }
 
@@ -378,13 +379,14 @@ func Run() {
 		panic(err)
 	}
 
-	// Periodically check if the proxies are working
-	go MonitorProxies(&ctx, cli)
-
 	spinner.Stop()
 
 	// Consume from the channel and set a new state saying that we're ready
 	<-serverState
+
+	// Periodically check if the proxies are working
+	go MonitorProxies(&ctx, cli)
+
 	serverState <- "Ready"
 
 	// Wait until waitgroup is done
