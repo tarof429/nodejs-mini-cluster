@@ -6,7 +6,7 @@ nodejs Mini-Cluster uses reverse proxies to run an nodejs cluster running in doc
 
 ## Details
 
-When nmc-server starts, it will create and run docker containers when serve the site directory. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. 
+When nmc-server starts, it will create and run docker containers when serve the site directory. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. A monitor goroutine periodically checks whether each proxy is available and redeploys the container if inacccesible.
 
 By default, the server port (the port clients should connect to) is set to 3000. If you *curl http://localhost:3000*, each request will be routed to each container in round-robin fashion.
 
@@ -69,17 +69,12 @@ There are several options for running the server:
 
 ```bash
 $ ./nmc-server -h
-A mini cluster using nginx.
+A mini cluster using docker and nodejs
 
 Usage:
-  nginx-mini-cluster [flags]
+  nodejs-mini-cluster [flags]
 
 Flags:
-      --count string           Number of reverse proxies (default "2")
-  -h, --help                   help for nginx-mini-cluster
-      --nginx-version string   nginx version (default "latest")
-      --port string            Initial port used by the proxies (default "3001")
-      --server-port string     Server port (default "3000")
-      --site string            Directory serving files (default "/home/taro/nginx-mini-cluster/site")
-  -v, --version                version for nginx-mini-cluster
+  -h, --help      help for nodejs-mini-cluster
+  -v, --version   version for nodejs-mini-cluster
 ```
