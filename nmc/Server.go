@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -55,11 +54,13 @@ func AddProxy(proxy httputil.ReverseProxy) {
 
 // RemoveProxy removes a reverse proxy from proxies
 func RemoveProxy(index int) {
-	// Set the current proxy to the last proxy in the list
-	proxies[index] = proxies[len(proxies)-1]
+	if index > 0 && index < len(proxies) {
+		// Set the current proxy to the last proxy in the list
+		proxies[index] = proxies[len(proxies)-1]
 
-	// Return a slice of proxies, which exludes the last one (effectively orphaning it)
-	proxies = proxies[:len(proxies)-1]
+		// Return a slice of proxies, which exludes the last one (effectively orphaning it)
+		proxies = proxies[:len(proxies)-1]
+	}
 }
 
 // DoRoundRobin proxies each request to the next proxy.
@@ -275,14 +276,14 @@ func CreateReverseProxy(config ContainerConfig) httputil.ReverseProxy {
 	return httputil.ReverseProxy{Director: director}
 }
 
-// Run runs the proxies and main HTTP server. The site is the path where files will be served.
-func Run(serverPort int, port int) {
+// Run runs the proxies and main HTTP server.
+func Run() {
 
 	serverState = make(chan string)
 
 	cfg := yacspin.Config{
 		Frequency:       100 * time.Millisecond,
-		CharSet:         yacspin.CharSets[25],
+		CharSet:         yacspin.CharSets[53],
 		Suffix:          " Starting cluster... ",
 		SuffixAutoColon: true,
 		StopCharacter:   "✓",
@@ -342,7 +343,7 @@ func Run(serverPort int, port int) {
 	wg.Add(1)
 
 	go func() {
-		log.Fatal(http.ListenAndServe(":"+strconv.Itoa(serverPort), nil))
+		log.Fatal(http.ListenAndServe(":"+hostPort, nil))
 		wg.Done() // goroutine for http server is done
 	}()
 

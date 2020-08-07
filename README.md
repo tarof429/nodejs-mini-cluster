@@ -1,38 +1,58 @@
-# NGINX Mini-Cluster
+# nodejs Mini-Cluster
 
 ## Introduction
 
-NGINX Mini-Cluster runs an nginx cluster. It lets you serve web sites with some level of high-availability.
+nodejs Mini-Cluster uses reverse proxies to run an nodejs cluster running in docker containers. It lets you serve web sites with some level of high-availability.
 
 ## Details
 
-When nc-server starts, it will create and run nginx docker containers when serve the site directory. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. 
+When nmc-server starts, it will create and run docker containers when serve the site directory. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. 
 
-By default, the server port (the port clients should connect to) is set to 3000. If you *curl http://localhost:3000*, each request will be routed to each nginx container in round-robin fashion.
+By default, the server port (the port clients should connect to) is set to 3000. If you *curl http://localhost:3000*, each request will be routed to each container in round-robin fashion.
 
 ```bash
                                                        ----------
-                                                3001   | nginx  |
+                                                3001   | nodejs  |
                                              --------------------
                                              |         | docker |
                            --------------    |         ----------
  http://localhost:3000 ->  | nmc-server | ---|         ----------
-                           --------------    |         | nginx  |
+                           --------------    |         | nodejs  |
                                              ---------------------
                                                 3002   | docker |  
                                                        ----------
 ```
 
-## Example
+## Building
 
-A sample site is provided. To test, open a terminal and type:
+If this is the first time to build, you must build the docker container.
 
 ```bash
-$ ./nmc-server --site=`pwd`/demo-site/
-✓ Starting Nginx Mini-cluster...
+$ make nodejs
 ```
 
-In another terminal, run:
+Afterwards just run make
+
+```bash
+$ make
+```
+
+## Running
+
+```bash
+$ ./nmc-server
+✓ Starting cluster...
+```
+
+Confirm that the containers are running.
+
+```bash
+$ docker ps|grep nodejs
+1fabae0e9ddc        nodejs.org                "/usr/local/bin/npm …"   16 seconds ago      Up 15 seconds           0.0.0.0:3002->8080/tcp                                         nginx-3002
+e7599c8bc087        nodejs.org                "/usr/local/bin/npm …"   17 seconds ago      Up 15 seconds           0.0.0.0:3001->8080/tcp                                         nginx-3001
+```
+
+Point your browser to:
 
 ```bash
 $ curl http://localhost:3000

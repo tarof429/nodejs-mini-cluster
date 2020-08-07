@@ -18,7 +18,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/spf13/cobra"
 	nmc "github.com/tarof429/nmc"
@@ -30,28 +29,14 @@ var serverPort string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "nginx-mini-cluster",
-	Short: "A mini cluster using nginx",
-	Long:  `A mini cluster using nginx.`,
+	Use:   "nodejs-mini-cluster",
+	Short: "A mini cluster using docker and nodejs",
+	Long:  `A mini cluster using docker and nodejs`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
 
-		iPort, err := strconv.Atoi(port)
-
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		serverPort, err := strconv.Atoi(serverPort)
-
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		nmc.Run(serverPort, iPort)
+		nmc.Run()
 
 	},
 }
@@ -68,18 +53,11 @@ func Execute() {
 func init() {
 	//cobra.OnInitialize(initConfig)
 
-	port = "3001"
-
-	serverPort = "3000"
-
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
 	//rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.nginx-mini-cluster.yaml)")
-
-	rootCmd.PersistentFlags().StringVar(&port, "port", port, "Initial port used by the proxies")
-	rootCmd.PersistentFlags().StringVar(&serverPort, "server-port", serverPort, "Server port")
 
 	rootCmd.Version = "1.0"
 
