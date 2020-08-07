@@ -63,6 +63,48 @@ func RemoveProxy(index int) {
 	}
 }
 
+func ResetProxy(ctx *context.Context, cli *client.Client, proxyIndex int) {
+
+	log.Println("Removing proxy")
+	RemoveProxy(proxyIndex)
+
+	log.Println("Stopping container")
+	err := StopContainer(ctx, cli, configs[proxyIndex].body)
+
+	if err != nil {
+		log.Println("Container could not be stopped")
+	}
+
+	log.Println("Creating container")
+
+	body, err := CreateContainer(ctx, cli, configs[proxyIndex])
+
+	if err != nil {
+		log.Println("Container could not be created")
+		return
+	}
+
+	// Update container ID
+	configs[proxyIndex].body = body
+
+	log.Println("Starting container")
+
+	err = StartContainer(ctx, cli, body)
+
+	if err != nil {
+		log.Println("Container could not be started")
+		return
+	}
+
+	HandleCtrlC(ctx, cli, configs[proxyIndex])
+
+	proxy := CreateReverseProxy(configs[proxyIndex])
+
+	AddProxy(proxy)
+
+	log.Println("Proxy available")
+}
+
 // DoRoundRobin proxies each request to the next proxy.
 func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.ReverseProxy) {
 
@@ -94,46 +136,7 @@ func DoRoundRobin(ctx *context.Context, cli *client.Client, proxies []httputil.R
 			// Let the client know that the request failed
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 
-			go func() {
-				RemoveProxy(proxyIndex)
-
-				log.Println("Stopping container")
-
-				err := StopContainer(ctx, cli, configs[proxyIndex].body)
-
-				if err != nil {
-					log.Println("Container could not be stopped")
-				}
-
-				log.Println("Creating container")
-
-				body, err := CreateContainer(ctx, cli, configs[proxyIndex])
-
-				if err != nil {
-					log.Println("Container could not be created")
-					return
-				}
-
-				// Update container ID
-				configs[proxyIndex].body = body
-
-				log.Println("Starting container")
-
-				err = StartContainer(ctx, cli, body)
-
-				if err != nil {
-					log.Println("Container could not be started")
-					return
-				}
-
-				HandleCtrlC(ctx, cli, configs[proxyIndex])
-
-				proxy = CreateReverseProxy(configs[proxyIndex])
-
-				AddProxy(proxy)
-
-				log.Println("Proxy available")
-			}()
+			go ResetProxy(ctx, cli, proxyIndex)
 			log.Println("Re-creating proxy...")
 
 		}
