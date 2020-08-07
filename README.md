@@ -1,12 +1,12 @@
-# nodejs Mini-Cluster
+# nodejs mini-cluster
 
 ## Introduction
 
-nodejs Mini-Cluster uses reverse proxies to run an nodejs cluster running in docker containers. It lets you serve web sites with some level of high-availability.
+nodejs mini-cluster uses reverse proxies to run a nodejs cluster running in docker containers. The docker image used with this project is the nodejs website.
 
 ## Details
 
-When nmc-server starts, it will create and run docker containers when serve the site directory. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. A monitor goroutine periodically checks whether each proxy is available and redeploys the container if inacccesible.
+When nmc-server starts, it will create and run docker containers which run the nodejs website. The server routes trafic to each container in round-robin fashion. If a container becomes inaccessible it will be restarted automatically. A monitor goroutine periodically checks whether each proxy is available and redeploys the container if inacccesible.
 
 By default, the server port (the port clients should connect to) is set to 3000. If you *curl http://localhost:3000*, each request will be routed to each container in round-robin fashion.
 
