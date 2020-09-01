@@ -53,6 +53,7 @@ func AddProxy(proxy httputil.ReverseProxy) {
 
 // RemoveProxy removes a reverse proxy from proxies
 func RemoveProxy(index int) {
+	fmt.Println("Removing proxy")
 	if index > 0 && index < len(proxies) {
 		// Set the current proxy to the last proxy in the list
 		proxies[index] = proxies[len(proxies)-1]
@@ -68,7 +69,7 @@ func MonitorProxies(ctx *context.Context, cli *client.Client) {
 	//fmt.Println("Monitoring proxies")
 
 	for {
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 
 		for index, config := range configs {
 			url := "http://localhost:" + config.hostPort
@@ -76,6 +77,7 @@ func MonitorProxies(ctx *context.Context, cli *client.Client) {
 			err := HealthcheckURL(url, 3)
 
 			if err != nil {
+				RemoveProxy(proxyIndex)
 				ResetProxy(ctx, cli, index)
 			}
 		}
@@ -88,8 +90,8 @@ func ResetProxy(ctx *context.Context, cli *client.Client, proxyIndex int) {
 
 	log.Println("Resetting proxy")
 
-	log.Println("Removing proxy")
-	RemoveProxy(proxyIndex)
+	// log.Println("Removing proxy")
+	// RemoveProxy(proxyIndex)
 
 	log.Println("Stopping container")
 	err := StopContainer(ctx, cli, configs[proxyIndex].body)
@@ -107,9 +109,6 @@ func ResetProxy(ctx *context.Context, cli *client.Client, proxyIndex int) {
 		return
 	}
 
-	// Update container ID
-	configs[proxyIndex].body = body
-
 	log.Println("Starting container")
 
 	err = StartContainer(ctx, cli, body)
@@ -125,7 +124,21 @@ func ResetProxy(ctx *context.Context, cli *client.Client, proxyIndex int) {
 
 	AddProxy(proxy)
 
-	log.Println("Proxy available")
+	// Update container ID
+	configs[proxyIndex].body = body
+
+	url := "http://localhost:" + configs[proxyIndex].hostPort
+
+	log.Println("Checking " + url + " to see if it's healthy")
+
+	err = HealthcheckURL(url, 10)
+
+	if err == nil {
+		log.Println("Proxy available")
+	} else {
+		log.Println("Proxy not healthy!")
+	}
+
 }
 
 // DoRoundRobin proxies each request to the next proxy.
